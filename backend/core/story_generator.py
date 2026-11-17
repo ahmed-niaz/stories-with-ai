@@ -1,7 +1,6 @@
 import os
 
 from dotenv import load_dotenv
-from langchain_core.output_parsers import PydanticOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_google_genai import ChatGoogleGenerativeAI
 from sqlalchemy.orm import Session
@@ -37,46 +36,23 @@ class StoryGenerator:
         cls, db: Session, session_id: str, theme: str = "fantasy"
     ) -> Story:
         llm = cls._get_llm()
-        story_parser = PydanticOutputParser(
-            pydantic_object=StoryLLMResponse
-        )
+        structured_llm = llm.with_structured_output(StoryLLMResponse)
 
         prompt = ChatPromptTemplate.from_messages(
             [
                 ("system", STORY_PROMPT),
                 ("human", f"Create the story with this theme: {theme}"),
             ]
-        ).partial(
-            format_instructions=story_parser.get_format_instructions()
-        )
+        ).partial(format_instructions="")
 
-        raw_response = llm.invoke(prompt.invoke({}))
+        story_structure = structured_llm.invoke(prompt.invoke({}))
 
-        response_text = raw_response
-        if hasattr(raw_response, "content"):
-            content = raw_response.content
-            if isinstance(content, list):
-                response_text = "".join(
-                    part.get("text", "")
-                    if isinstance(part, dict)
-                    else str(part)
-                    for part in content
-                )
-            else:
-                response_text = str(content)
-        else:
-            response_text = str(raw_response)
-
-        clean_text = response_text.strip()
-        if clean_text.startswith("```"):
-            lines = clean_text.splitlines()
-            if lines and lines[0].startswith("```"):
-                lines = lines[1:]
-            if lines and lines[-1].startswith("```"):
-                lines = lines[:-1]
-            clean_text = "\n".join(lines).strip()
-
-        story_structure = story_parser.parse(clean_text)
+        if not story_structure or not isinstance(
+            story_structure, StoryLLMResponse
+        ):
+            raise ValueError(
+                "Failed to generate a valid story structure from LLM."
+            )
 
         story_db = Story(title=story_structure.title, session_id=session_id)
         db.add(story_db)
